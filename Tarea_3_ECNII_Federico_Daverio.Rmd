@@ -1,0 +1,532 @@
+--- 
+title: "Tarea 3 ECNII 2020" 
+author: "Federico Daverio" 
+output:
+  html_document:
+    toc: yes
+    toc_depth: 3
+    number_sections: no
+    theme: united
+    highlight: tango
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '3' 
+---
+
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(echo = TRUE) 
+rm(list = ls())
+options(scipen=999) 
+memory.limit(size=56000) 
+library(pacman) 
+p_load(Hmisc,mfx,readr, dplyr,haven, margins,MASS, stargazer, AER) 
+library(tidyverse)
+library(reticulate) 
+library(sandwich) 
+library(readr) 
+library(sandwich)
+library(clubSandwich) 
+library(modelsummary) 
+library(estimatr) 
+library(lmtest)
+library(formattable) 
+library(car) 
+library(nnet) 
+library(nlsr) 
+library(janitor)
+library(data.table) 
+library(VGAM) 
+library(sampleSelection)
+library(censReg)
+library(plm)
+library(knitr)
+library(ExPanDaR)
+```
+
+# Pregunta 1 
+Considere la base de datos *comportamiento_wide.csv*. Esta base contiene información individual de niñas y niños, incluyendo su género, edad, raza e información de sus madres. Además, se incluye una medida auto reportada de autoestima (**self**) y una evaluación de comportamiento antisocial (**anti**). Se quiere conocer cómo influye la autoestima en el comportamiento antisocial. Para cada niño o niña hay tres observaciones en el tiempo. Se busca explicar el comportamiento antisocial en función de la autoestima y la condición de pobreza (**pov**):
+
+$$anti_{it}=\alpha_i+\beta_1 self_{it}+\beta_2 pov_{it}+\varepsilon_{it}$$
+
+## Inciso A
+La base se encuentra en formato wide. Ponga la base en formato long, donde haya una columna para cada variable y donde las filas representen a un individuo en un periodo.
+
+Importamos la base de datos:
+
+```{r}
+dbc<- read.csv("C:/DAVE2/CIDE/3 semestre/ecnII/TAREA 3/comportamiento_wide.csv", encoding = 'latin1')
+```
+
+Analizamos la estructura de datos:
+```{r}
+head(dbc,4)
+```
+
+Pasamos la base en formato *long*:
+```{r}
+dbc_l <-reshape(dbc, varying = c("anti90","anti92", "anti94", "self90", "self92", "self94", "pov90","pov92","pov94"), timevar = "time", idvar = "id", direction="long", sep = "9")
+kable(head(dbc_l,4))
+```
+El database pasa de tener un tamaño de *581x17* en formato *wide* a *1743x12* en formato *long*.
+
+## Inciso B
+Estime la ecuación de comportamiento antisocial empleando MCO pooled. ¿Cuáles son los supuestos que se deben cumplir para que $\hat{\beta}_1^{MCO}$ sea consistente?
+
+Estimamos el modelo agrupado:
+```{r}
+modelo.pooled <-plm(anti~self+pov,model="pooling",data=dbc_l,index =c("id","time") )
+kable(tidy(modelo.pooled), digits=5,caption="Regresión agrupada (Pooled model)")
+```
+
+Calculamos los errores robustos con la matriz de White:
+```{r}
+tbl<- tidy(coeftest(modelo.pooled, vcov=vcovHC(modelo.pooled, type="HC0",cluster="group")))
+kable(tbl, digits=5, caption= "Modelo Pooled con errores estándar robustos (HC0) agrupado")
+```
+
+Los supuestos es que los regresores no están correlacionados con el error, ósea el modelo no es de efectos fijos. La heterogeneidad no observable contenida en el error es ortogonal a las variables explicativas.  
+
+Tenemos que considerar la correlación serial cuando calculamos los errores estándar que tendrán ser agrupados a nivel individual.
+
+## Inciso C
+Estime la ecuación de comportamiento antisocial empleando efectos fijos. ¿Cuáles son los supuestos que se deben cumplir para que $\hat{\beta}_1^{FE}$ sea consistente?
+
+Estimamos la ecuación de comportamiento antisocial con un modelo *within*:
+```{r}
+modelo.within <-plm(anti~self+pov,model="within",data=dbc_l,index =c("id","time") )
+kable(tidy(modelo.within), digits=5,caption="Regresión Efectos fijos")
+```
+
+Calculamos los errores robustos:
+```{r}
+tbl<- tidy(coeftest(modelo.within, vcov. = vcovHC, type = "HC0"))
+kable(tbl, digits=5, caption= "Modelo within con errores estándar robustos")
+```
+Para que $\hat{\beta}_1^{FE}$ sea consistente necesitamos que los $\alpha_i$ son  efectivamente efectos fijos y que $\epsilon_{it}$ sea independiente e idénticamente distribuido. Para que los efectos estimados sean consistentes es además necesario que el panel sea largo. Si no tenemos muchos periodos (panel largo) son necesarios muchos individuos para probar consistencia. 
+
+La consistencia del estimador matemáticamente se da cuando:
+
+$$p\lim \frac{1}{NT}\sum_i\sum_y(x_{it}-\bar{x}_i)(y_{it}-\bar{y}_i)=0$$
+
+Esta expresión será efectivamente igual a 0 Cuando $N\to\infty$ o $T\to\infty$, ósea tenemos un panel largo o muchos individuos en el panel.
+
+Si suponemos exogeneidad fuerte esta resulta ser una condición suficiente para la consistencia del estimador.
+
+## Inciso D
+Estime la ecuación de comportamiento antisocial empleando efectos fijos. ¿Cuáles son los supuestos que se deben cumplir para que $\hat{\beta}_1^{FE}$ sea consistente?
+
+```{r}
+modelo.efectos.aleatorios<- plm(anti~self+pov,
+                  data=dbc_l, random.method="swar",index =c("id","time"),
+                  model="random")
+kable(tidy(modelo.efectos.aleatorios), digits=4, caption=
+      "Resultados del Modelo de Efectos Aleatorios")
+```
+
+Calculamos los errores robustos con la matriz de White:
+```{r}
+tbl<- tidy(coeftest(modelo.efectos.aleatorios, vcov=vcovHC(modelo.efectos.aleatorios, type="HC0")))
+kable(tbl, digits=5, caption= "Modelo Efectos Aleatorios con errores estándar robustos (HC0) agrupado")
+```
+
+De nuevo se necesita exogeneidad fuerte. El estimador de efectos aleatorios será consistentes si $NT \rightarrow \infty$, osea o tenemos suficientes periodos o suficientes individuos (observaciones).
+
+## Inciso E
+Se desea incorporar en el análisis el género (gender) y una variable dicotómica para los hispanos (hispanic). Indique qué modelo usaría y estime dicho modelo.
+
+Técnicamente podríamos utilizar uno entre el modelo pooled y el de efectos aleatorio, siendo que en el modelo de efectos fijos no podríamos estimar el impacto de las variables en examen siendo que son invariantes en el tiempo. En este caso se optará para un modelo agrupado.
+
+```{r}
+modelo.pooled2 <-plm(anti~self+pov+gender+hispanic,model="pooling",data=dbc_l,index =c("id","time") )
+kable(tidy(modelo.pooled2), digits=3,caption="Regresión agrupada(Pooled model)")
+```
+
+```{r}
+tbl<- tidy(coeftest(modelo.pooled2, vcov=vcovHC(modelo.pooled2, type="HC0",cluster="group")))
+kable(tbl, digits=5, caption= "Modelo Pooled con errores estándar robustos agrupados")
+```
+
+Estimamos el modelo con efectos aleatorios para comparación:
+```{r}
+mod.aleatorio<-plm(anti~self+pov+gender+hispanic, index=c("id","time"), model="random", random.method = "swar", data=dbc_l)
+tbl<- tidy(coeftest(mod.aleatorio, vcov=vcovHC(mod.aleatorio, type="HC0",)))
+kable(tbl, digits=5, caption= "Modelo Aleatorio con errores estándar robustos ")
+```
+
+## Inciso F
+Regrese al modelo que incluye solo la autoestima y el estado de pobreza como covariables. Realice una prueba de Hausman para determinar si se prefiere un modelo de efectos fijos o uno de efectos aleatorios.
+
+Efectuamos la prueba de Hausman:
+```{r}
+phtest(modelo.within, modelo.efectos.aleatorios)
+```
+
+Se rechaza la hipótesis nula y por lo tanto se prefiere el modelo de efectos fijos sobre el modelo de efectos aleatorios. 
+
+# Pregunta 2
+Cuando trabajamos con datos en panel tenemos dos fuentes de variación. Como los individuos difieren entre sí, por ejemplo, algunos tienen mayor habilidad que otros o algunos tienen mayor salario que otros, la primera fuente de variación es la que proviene de comparar entre unidades. Esta primera fuente de variación es la variación between. La variación between se define como:
+
+$$s^2_B=\frac{1}{N-1}\sum_i(\bar{x}_i-\bar{x})^2$$
+En la expresión anterior $\bar{x}_i=\frac{1}{T}\sum_t x_{it}$ es el promedio de la característica $x$ para un individuo a lo largo del tiempo. Por tanto, $(\bar{x}_i-\bar{x})$ compara esta característica promedio con el promedio de todos los individuos $\bar{x}=\frac{1}{NT}\sum_i\sum_t x_{it}$.
+
+La segunda fuente de variación surge porque las características de los individuos varían a lo largo del tiempo. A esta variación se le llama variación within. La variación within se define como:
+
+$$s_W^2=\frac{1}{NT-1}\sum_i\sum_t(x_{it}-\bar{x}_i)^2$$
+
+Así, la varianza total se define como:
+
+$$s_O^2=\frac{1}{NT-1}\sum_i\sum_t(x_{it}-\bar{x})\approx s^2_B+s^2_W$$
+
+Considere la base de datos individuos_empleo_wide.csv. Esta base de datos contiene información de trabajadores relativa a su salario, su educación y experiencia. En este ejercicio comprobará los resultados vistos en clase respecto al modelo de efectos fijos.
+
+## Inciso A
+La base de datos está en formato wide. Coloque sus datos en formato long.
+
+Cargamos la base:
+```{r}
+empl<- read.csv("C:/DAVE2/CIDE/3 semestre/ecnII/TAREA 3/individuos_empleo_wide.csv", encoding = 'latin1')
+```
+
+Analizamos la estructura de datos:
+```{r}
+names(empl)
+```
+
+
+Pasamos la base en formato *long*:
+```{r}
+empl_l <-reshape(empl, varying = 2:85 , timevar = "time", idvar = "id", direction="long", sep = "0")
+```
+
+La base en formato *wide* tenía 769 observaciones por 85 variables y ahora ña base de datos es una matriz de 5383 x 14.
+
+## Inciso B
+¿Cómo es la variación within y between de la variable wage? ¿Cuál es mayor y por qué? Para responder a esta pregunta, implemente la siguiente función:
+
+Cargamos la función:
+```{r}
+XTSUM <- function(data, varname, unit) {
+  varname <- enquo(varname)
+  loc.unit <- enquo(unit)
+  ores <- data %>% summarise(ovr.mean=mean(!! varname, na.rm=TRUE), ovr.sd=sd(!! varname, na.rm=TRUE), ovr.min = min(!! varname, na.rm=TRUE), ovr.max=max(!! varname, na.rm=TRUE), ovr.N=sum(as.numeric((!is.na(!! varname)))))
+  bmeans <- data %>% group_by(!! loc.unit) %>% summarise(meanx=mean(!! varname, na.rm=T), t.count=sum(as.numeric(!is.na(!! varname))))
+  bres <- bmeans %>% ungroup() %>% summarise(between.sd = sd(meanx, na.rm=TRUE), between.min = min(meanx, na.rm=TRUE), between.max=max(meanx, na.rm=TRUE), Units=sum(as.numeric(!is.na(t.count))), t.bar=mean(t.count, na.rm=TRUE))
+  wdat <- data %>% group_by(!! loc.unit) %>% mutate(W.x = scale(!! varname, scale=FALSE))
+  wres <- wdat %>% ungroup() %>% summarise(within.sd=sd(W.x, na.rm=TRUE), within.min=min(W.x, na.rm=TRUE), within.max=max(W.x, na.rm=TRUE))
+  return(list(ores=ores,bres=bres,wres=wres))
+}
+```
+
+Ahora bien aplicamos la función para la variable **wage** como requerido:
+```{r}
+XTSUM(empl_l,wage2,id)
+```
+La desviación estándar mayor de la variable **wage** es la between (14480) respecto a la within (8785). Eso se debe probablemente al hecho que el salario de un individuo varía menos a lo largo del tiempo respecto a la variación de salarios entre individuos distintos. Además tenemos más individuos que periodos y esto puede exacerbar este efecto.
+
+## Inciso C
+Repita el procedimiento anterior para la variable **black**. ¿Qué sucede en este caso?
+
+Volvemos a aplicar la función:
+```{r}
+XTSUM(empl_l, black2,id)
+```
+
+La variación within nos da una desviación estándar igual a 0, esto porque esta característica no cambia a lo largo del tiempo. La desviación estándar between tiene un valor de 0.475, esto significa que en nuestra base de datos hay individuos de distintas razas. 
+
+## Inciso D
+Para estudiar la regresión entre salario y experiencia se propone estudiar el siguiente modelo:
+
+$$wage_{it}=\alpha_i+\beta exper_{it}+\varepsilon_{it}$$
+Compruebe que el estimador de efectos fijos es equivalente a MCO con dummies de individuos.
+
+Estimamos el modelo por efectos fijos.
+```{r}
+ef<-plm(wage2~exper2,model="within",data=empl_l )
+kable(tidy(ef), digits=3,caption="Regresión Efectos fijos")
+```
+
+Ahora comprobamos si coincide con el modelo estimado por MCO, poniendo dummies para cada individuo:
+```{r}
+MCO<-lm(wage2~exper2+factor(id),empl_l)
+(summary(MCO)$coefficients)[1:2,]
+```
+Podemos efectivamente notar que los dos modelos son iguales:
+```{r}
+stargazer(MCO,ef,type = 'text', keep = "exper2")
+```
+
+
+## Inciso E
+Compruebe que en un modelo de efectos fijos las características que no varían en el tiempo no pueden ser identificadas. Use la variable **black** para comprobarlo.
+
+
+Estimamos el modelo de efectos fijos añadiendo a la ecuación la variable observable **black**.
+```{r}
+ef2<-plm(wage2~exper2+black2,model="within",data=empl_l )
+kable(tidy(ef2), digits=3,caption="Regresión Efectos fijos")
+```
+Notamos que no puede ser estimados por el modelo y no se reporta por lo tanto en la tabla final.
+
+Matemáticamente tenemos que:
+
+$$\begin{align}
+\begin{split}
+Y_{it} - \overline{Y}_i =& \, \beta_1(X_{it}-\overline{X}_i) + (u_{it} - \overline{u}_i) \\
+\overset{\sim}{Y}_{it} =& \, \beta_1 \overset{\sim}{X}_{it} + \overset{\sim}{u}_{it}. 
+\end{split} \tag{10.5}
+\end{align}$$
+
+Para la variable invariante en el tiempo **black**, considerando la ecuación anterior, tendríamos que $X_{it}-\overline{X}_i=0$ y por lo tanto no se podría obtener su estimador.
+
+## Inciso F
+Compruebe que el estimador de efectos fijos es equivalente a MCO sobre el modelo en diferencias con respecto a la media. Para esto, conserve dos años consecutivos de datos y solo observaciones que tengan datos para salarios y experiencia en los dos años que elija. Luego estime por MCO el modelo con variables transformadas.
+
+Filtramos la base y conservamos los años 13 y 14:
+```{r}
+empl_l2<-empl_l%>%filter(time==13 | time==14)%>%drop_na(wage2)%>%drop_na(exper2)
+```
+
+Calculamos las medias por wage2 y exper2:
+```{r}
+empl_l3 <- empl_l2 %>% group_by(id) %>% summarise(mean_wage = mean(wage2),  mean_exper = mean(exper2), n = n())%>%ungroup()
+```
+
+Unimos las base de datos calculadas:
+```{r}
+empl_l4<-left_join(empl_l2,empl_l3, by='id')
+```
+
+Efectuamos la diferencia:
+```{r}
+empl_l5<-empl_l4%>%mutate(newage=wage2-mean_wage,newexper=exper2-mean_exper)
+```
+
+Estimamos el modelo en desviaciones con MCO:
+```{r}
+mco2<-lm(newage~newexper,empl_l5)
+summary(mco2)
+```
+Calculamos el modelo within con la función dedicada:
+```{r}
+ef2<-plm(wage2~exper2+black2,model="within",data=empl_l2 )
+kable(tidy(ef2), digits=3,caption="Regresión Efectos fijos")
+```
+
+Comparamos los dos modelos:
+```{r}
+stargazer(mco2,ef2, type="text")
+```
+Notamos que los estimadores obtenidos son iguales.
+
+## Inciso G
+Compruebe que el estimador de efectos fijos es equivalente a MCO sobre el modelo en primeras diferencias. Parta de la muestra con dos años de la parte f. para estimar por MCO el modelo con variables transformadas.
+
+calculamos las diferencias de las observaciones para los años considerados:
+```{r}
+empl2<-empl%>%select(wage2013,wage2014,exper2013,exper2014)%>%mutate(waged=wage2014-wage2013, experd=exper2014-exper2013)%>%drop_na(waged,experd)
+```
+
+Estimamos el modelo en diferencias con MCO:
+```{r}
+mco3<-lm(waged~experd, na.omit=T, empl2)
+summary(mco3)
+```
+
+Comparamos de nuevo el modelo estimado previamente con la estimación hecha en diferencias por MCO:
+```{r}
+stargazer(mco3,ef2, type="text")
+```
+Notamos que de nuevo los estimadores coinciden. Esto en cuanto estamos consideramos solo dos años. 
+
+# Pregunta 3
+La librería *ExPanDaR* es muy útila para visualizar datos en formato de panel. Use la base en formato long que construyó para la pregunta 2.
+
+## Inciso A
+Use la función *ExPanD* para crear una aplicación interactiva que le permita explorar sus datos. Un aspecto que puede apreciar es el porcentaje de datos faltantes. ¿Qué variable tiene el mayor porcentaje de NA?
+
+Utilizamos la función **ExPanD**
+```{r, eval=FALSE}
+ExPanD(df=empl_l, ts_id = "time", cs_id = "id", title = "Exploración de datos",
+abstract = "Datos tomados de la base del ejercicio")
+```
+
+Notamos por la representación gráfica obtenida que la variable con mayor missing values (NA) es *wage2*.
+
+En particular tenemos que hay el 55.6% de valores faltantes por la variable *wage2*.
+
+```{r}
+sum(is.na(empl_l$wage2))/dim(empl_l)[1]
+```
+
+
+## Inciso B
+No siempre es útil crear una aplicación interactiva. Usando funciones, puede crear aspectos específicos objetos en la aplicación interactiva y trabajar con ellos de acuerdo con sus necesidades. Por ejemplo, use la función prepare_missing_values_graph de este paquete para visualizar el porcentaje de datos faltantes.
+
+```{r}
+prepare_missing_values_graph(empl_l,ts_id = "time")
+```
+
+Si consideramos solo la presencia o menos de missing para cada año respecto a las variables observables tendremos que:
+
+```{r}
+prepare_missing_values_graph(empl_l,ts_id = "time", binary = T)
+```
+
+
+# Pregunta 4
+Considere la base de datos tarea_examen.csv. Esta base contiene información sobre 519 estudiantes en 23 escuelas. Nos interesa la relación entre el tiempo dedicado a realizar la tarea (**tiempo**) y el resultado de un examen de econometría (**examen**). Las variables **escuela_id** y **estudiante_id** identifican a las escuelas y los estudiantes, respectivamente. El modelo por estimar es el siguiente:
+
+$$examen_{is}=\alpha+\beta tiempo_{is}+\varepsilon_{is}$$
+
+
+## Inciso A
+¿Por qué decimos que estos datos están agrupados?
+
+```{r}
+esc<- read.csv("C:/DAVE2/CIDE/3 semestre/ecnII/TAREA 3/tarea_examen.csv", encoding = 'latin1')
+```
+
+Analizamos la estructura de datos:
+```{r}
+head(esc,4)
+```
+
+Tenemos datos para 23 escuelas, podemos decir que están agrupados siendo que los individuos que pertenecen a la misma escuela podrían compartir características y por lo tanto los errores serán correlados adentro de un grupo (escuela).
+
+Analizamos la distribuciónd y frecuencia de los datos por grupo (escuela)
+```{r}
+ggplot(esc)+
+  geom_bar(aes(factor(escuela_id), fill='salmon'))+theme_bw()
+```
+Podemos ver también en el diagrama de distribución de frecuencias de los individuos con respecto a la escuelas que podemos suponer características distintas entre sí para estas últimas.
+
+## Inciso B
+Estime la ecuación de calificación usando MCO ignorando la agrupación de datos. ¿Qué concluye?
+
+```{r}
+mco<-lm(examen~tiempo, esc)
+summary(mco)
+```
+Con esta simple ecuación estamos intentando estimar el efecto causal del tiempo de estudio en la calificación de los alumnos. Sin embargo, este estimador podría ser sesgado dado que no estamos controlando por otras variables que podrían afectar la calificación del alumno, tendríamos por lo tanto un problema de variables omitidas. Además, el sistema de calificación podría diferir entre escuelas y por lo tanto los errores estándar estimados podrían no haber sido calculados correctamente.
+
+Si pensamos que no haya variables omitidas y los errores son homoscedasticos un aumento marginal de una unidad de tiempo incrementa la nota del estudiante de 3.12 puntos. Este efecto resulta estadísticamente significativo al 1%.
+
+## Inciso C
+Estime la ecuación de calificación usando MCO y errores robustos a heteroscedasticidad. ¿Qué cambia y por qué?
+
+```{r}
+coeftest(mco, vcov=vcovHC(mco, type="HC1"))
+```
+Los errores estándar correctos por heteroscedasticidad resultan menores (2816 vs 2861). Esto se debe al hecho que con toda probabilidad hay heteroscedasticidad y la varianza de las calificaciones cambia con base al tiempo invertido en el estudio. 
+
+Podemos comprobarlo gráficamente:
+
+```{r}
+ggplot(esc, aes(x=tiempo, y=examen))+geom_smooth(method = 'lm')+geom_point()
+```
+
+
+## Inciso D
+Estime la ecuación de calificación usando MCO y variables indicadoras de escuela. ¿Qué resuelve este procedimiento?
+
+Estimamos la relación por MCO introduciendo dummies para las escuelas:
+```{r}
+mcoesc<-lm(examen~tiempo+factor(escuela_id), esc)
+(summary(mcoesc)$coefficients)[1:2,]
+```
+Incluyendo dummies para cada escuela estamos considerando efectos fijos por escuela. Tendremos así interceptos distintos para cada escuela y esto nos permitirá obtener una estimación más precisa siendo que estamos depurando el efecto de la escuela sobre las clasificaciones. Podemos notar que sin considerar este elemento estábamos sobrestimando los efectos del tiempo sobre la clasificación. Resolvemos así la heterogeneidad no observada de cada escuela. El nuevo efecto estimados por cada unidad demás de tiempo invertido en el estudio es de 2.4 puntos más en la calificación y resulta significativo al 1%. 
+
+## Inciso E
+Estime la ecuación de calificación usando MCO y variables indicadoras de escuela. ¿Qué resuelve este procedimiento?
+
+```{r}
+coef_test(mco, vcov="CR1S",cluster=esc$escuela_id, test="naive-t")
+```
+Con este procedimiento estamos agrupando los errores por escuelas. Por lo tanto, estamos considerando explícitamente el hecho que puede haber características compartidas entre individuos que pertenecen a la misma escuela. Estamos por lo tanto corrigiendo los errores estándar considerando que estos no sean independientes entre individuos que frecuentan la misma escuela. Se toma en cuenta la correlación intraclase y el tamaño promedio de los diferentes grupos. A pesar de la corrección el estimador del tiempo sigue significativo al 1%. El elemento por considerar para teoría asintótica es el número de grupos, 23 en nuestro caso.  
+
+## Inciso F
+Estime la ecuación de calificación usando MCO, variables indicadoras de escuela y con errores agrupados a nivel escuela. ¿Qué resuelve este procedimiento?
+
+```{r}
+coef_test(mcoesc, vcov="CR1S",cluster=esc$escuela_id, test="naive-t")[1:2,]
+
+```
+Finalmente estamos considerando las dos características estructurales del modelo que podían afectar nuestra estimación vistas previamente. Por lo tanto, estamos purgando el "efecto escuela distintas" de la evaluación del impacto del tiempo de estudio sobre la calificación (que venía sobrestimado), considerando la heterogeneidad entre escuelas por medio de efectos fijos, y corrigiendo los errores estándar agrupándolos por institución así de considerar características comunes entre los individuos que pertenecen a la misma escuela. Notamos que el efecto es de 2.36 unidades más en la calificación para cada hora de estudio adicional y resulta significativo al 1%. 
+
+# Pregunta 5
+Considere la base *capital_trabajo.csv*. Con una función de producción Cobb-Douglas las participaciones del capital y el trabajo en el valor de la producción se pueden estimar usando una regresión lineal. En algunas aplicaciones es de interés conocer el cociente de las participaciones estimadas.
+
+## Inciso A
+Usando 500 repeticiones bootstrap estime el error estándar del cociente capital-trabajo. Para ello realice el siguiente procedimiento:
+Importamos los datos:
+
+1. Genere una matriz vacía de 500 filas para coleccionar sus relaciones estimadas.
+2. En cada una de las repeticiones obtenga una muestra con remplazo a partir de la muestra original.
+3. Estime por MCO los coeficientes sobre el log del capital y el log del trabajo. La variable dependiente es el log del valor de la producción. Calcule el cociente de los coeficientes estimados. Guarde el cociente en la matriz.
+4. Repita 2. y 3. 500 veces.
+5. Calcule la desviación estándar de los cocientes estimados.
+
+
+```{r}
+kap<- read.csv("C:/DAVE2/CIDE/3 semestre/ecnII/TAREA 3/capital_trabajo.csv", encoding = 'latin1')
+```
+
+Analizamos la estructura:
+
+```{r}
+head(kap,4)
+```
+
+
+Numero repeticiones
+```{r}
+k=500
+```
+
+Creare una lista vacía:
+```{r}
+mx <- vector(length = k)
+```
+
+Efectuamos la rutina bootstrap para determinar los estimadores. 
+```{r}
+set.seed(123)
+for (i in 1:k) {
+  
+  foodb=sample_n(kap,size= nrow(kap),replace = TRUE)
+  mcofoo<-lm(lvalor~lcapital+ltrabajo, foodb)
+  coc = mcofoo$coefficients[2]/mcofoo$coefficients[3]
+  mx[i]= coc
+  
+}
+```
+
+Calculamos ahora la desviación estándar y el promedio de los estimadores calculados.
+```{r}
+sd(mx)
+
+mean(mx)
+```
+
+## Inciso B
+Compruebe que su cálculo aproxima el error estándar obtenido con el método Delta. Para ello, después de estimar la ecuación del valor de la producción con la muestra original puede usar la función deltaMethod del paquete car.
+
+Estimamos la regresión.
+```{r}
+mco<-lm(lvalor~lcapital+ltrabajo,kap)
+```
+
+Calculamos por metodo delta el estimador del cociente capita-trabajo.
+```{r}
+deltaMethod(mco, "lcapital/ltrabajo")
+```
+
+Podemos notar que efectivamente tanto el promedio de los estimadores obtenidos por bootstrap así como su desviaciones estándares aproximan suficientemente bien los valores del estimador obtenidos con el método delta.
+
+
+
+
+

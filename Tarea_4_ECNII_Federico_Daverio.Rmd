@@ -1,0 +1,255 @@
+--- 
+title: "Tarea 4 ECNII 2020" 
+author: "Federico Daverio" 
+output:
+  html_document:
+    toc: yes
+    toc_depth: 3
+    number_sections: no
+    theme: united
+    highlight: tango
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '3' 
+---
+
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(echo = TRUE) 
+rm(list = ls())
+options(scipen=999) 
+memory.limit(size=56000) 
+library(pacman) 
+p_load(Hmisc,mfx,readr, dplyr,haven, margins,MASS, stargazer, AER) 
+library(tidyverse)
+library(reticulate) 
+library(sandwich) 
+library(readr) 
+library(sandwich)
+library(pglm) 
+library(modelsummary) 
+library(estimatr) 
+library(lmtest)
+library(quantreg)
+library(formattable) 
+library(car) 
+library(nnet) 
+library(nlsr) 
+library(janitor)
+library(data.table) 
+library(VGAM) 
+library(sampleSelection)
+library(censReg)
+library(plm)
+library(knitr)
+library(ExPanDaR)
+```
+
+# Pregunta 1 
+Considere la base *MunichRent.rda*. Esta base contiene información sobre rentas en la ciudad de Munich, *rent*. Se desea modelar la renta en función de la antigüedad de los edificios en renta, controlando por el área, área. La variable yearc indica cuándo fue construido el edificio.
+
+## Inciso A
+Estime la densidad Kernel de las rentas por metro cuadrado, rentsqm, usando un Kernel epanechnikov. Use el estimador plug-in de Silverman para estimar el ancho de ventana óptimo.
+
+Importamos la base de datos:
+```{r}
+load("C:/DAVE2/CIDE/3 semestre/ecnII/TAREA 4/MunichRent.rda")
+```
+
+Analizamos la estructura de datos de *MunichRent*:
+```{r}
+head(MunichRent,4)
+```
+Estimamos el ancho de banda óptimo (delta de Silverman, ver Cameron Trivedi):
+```{r}
+delta <- 1.7188
+sd <- sd(MunichRent$rentsqm)
+iqr.adj <- IQR(MunichRent$rentsqm)/1.349
+N <- nrow(MunichRent)
+ajuste <- min(sd,iqr.adj)
+h <- 1.3643*delta*ajuste*N^(-0.2)
+h
+```
+Una vez que tenemos el ancho de banda optimo estimamos la densidad Kernel:
+
+```{r}
+k1 <- MunichRent %>% 
+  ggplot(aes(x=rentsqm)) +
+    geom_histogram(aes(y=..density..), bins=20, fill="#69b3a2", color="#e9ecef", alpha=0.9) +
+    geom_density(kernel="epanechnikov", bw=h/2)+
+    theme(plot.title = element_text(size=15))
+k1
+```
+
+
+
+## Inciso B
+Estime por MCO la relación entre la renta, rent y la antigüedad del edificio, controlando por área Estime la misma relación, pero con una regresión mediana. Interprete los coeficientes sobre la antigüedad en ambos casos.
+
+
+```{r}
+mcorent <- lm(rent~yearc + area,MunichRent)
+(summary(mcorent)$coefficients)[1:2,]
+```
+
+```{r}
+summary(r.q90 <- rq(rent~yearc +area,MunichRent, tau=0.5))
+```
+
+```{r}
+stargazer(mcorent, r.q90, type = 'text')
+```
+
+En ambos casos notamos que los coeficientes presentan la misma dirección y resultan significativos al 1%. Notamos que el efecto de *yearc* es mayor en la regresión en la mediana. ¿A que se debe?
+
+
+
+```{r}
+ggplot(MunichRent, aes(yearc, rent))+
+  geom_point()+
+  geom_smooth(method = 'lm')
+```
+
+Notamos que la mayoría de los edificio rentados están alrededor de la mediana por ello la regresión cuantil es más adecuado, pues mide los efectos sobre la distribución suavizando el efecto que tienen los outliers en la regresión MCO, por ejemplo notamos que hay casas antiguas que podrían tener un valor histórico y por lo tanto sesgar la estimación. En la regresión cuantil estas observaciones tienen un menor peso y por lo tanto el efecto de vivir en un edificio relativamente reciente resulta más importante.  
+
+## Inciso C
+Estime ahora una regresión cuantil para cada uno de los deciles de la distribución de la renta y represente en una gráfica los coeficientes por regresión cuantil junto con el coeficiente de MCO. ¿Concluye que vale la pena modelar la relación entre rentas y antigüedad usando regresión cuantil?
+
+```{r}
+
+r.q1_9 <- rq(rent~yearc + area, data=MunichRent, tau= 1:9/10)
+plot(summary(r.q1_9), parm="yearc", ylab="rent")
+
+```
+
+Parece que vale la pena modelar la realción entre renta y antiguedad por medio de una resión cuantil, pues el coeficiente asociado a year varía de manera significativa dependiendo del periodo en que se construyeron la casas y su relativa distribución, esto no vendría capturado por MCO donde el $\beta_{year}$ es constante. 
+
+Notamos en particular que el efecto *yearc* aumenta hasta llegar a la median de las observaciones, casas de 1960 cerca, para luego disminuir a partir de estos años. Esto podría depender del distrito en el que se ubican la mayoría de las casas, pues esto puede estar relacionado con la cercanía a lugares de trabajo o dinámicas que de momento no son observables y que se fueron dando conforme evoluciono el crecimiento de la ciudad.
+
+En particular podemos pensar que dependa del hecho que las nuevas casas resulten construidas en zonas menos céntricas y por lo tanto no resulte tan determinante el efecto determinando por la edad de la unidad habitacional. 
+
+
+# Pregunta 2
+
+Considere la base *crimen_nc.csv*. Esta base contiene datos anuales de 1981 a 1987 sobre crimen del estado de Carolina del Norte en Estados Unidos. Se desea modelar el log de la tasa de crimen, *lcrmrte*, en función del log de la probabilidad de arresto (*lprbarr*) y del log del número de policías per cápita (*lpolpc*).
+
+Se propone incluir como controles la probabilidad de sentencia (*lnprbconv*), la probabilidad de ir a prisión (*lprbpris*), el tiempo promedio de sentencia (*lavgsen*), la densidad de población (*ldensity*), el porcentaje de población joven (*lpctmle*), el porcentaje de la población no blanca (*lpctmin*), los salarios semanales en la construcción (*lwcon*), el transporte (*lwtuc*), el comercio (*lwtrd*), las finanzas (*lwfir*), los servicios (*lwser*), la manufactura (*lwmfg*) y los gobierno federal, estatal y local (*lwfed*, *lwsta* y *lwloc*). Además, se propone controlar por una dummy que indica una ciudad grande (*smsa*) y dummies regionales (*region*), así como efectos fijos por condado y por año.
+
+## Inciso A
+Estime un modelo de efectos fijos con los regresores descritos anteriormente. Interprete los coeficientes sobre el log de la probabilidad de arresto y el log del número de policías per cápita.
+
+Importamos base:
+
+```{r}
+data_crim<-read.csv("C:/DAVE2/CIDE/3 semestre/ecnII/TAREA 4/crimen_nc.csv")
+```
+
+
+Evaluamos el modelo:
+```{r}
+modelo.within <-plm(lcrmrte~lprbarr+lpolpc+lprbconv+lprbpris+lavgsen+ldensity+
+                      lpctymle + lpctmin + lwcon + lwtuc+lwtrd+lwfir+lwser+lwmfg+lwfed+ lwsta+ lwloc+factor(smsa)+factor(region)
+                      ,model="within", effect="twoways",index=c("county", "year"),data=data_crim )
+kable(tidy(modelo.within), digits=3,caption="Regresión Efectos fijos")
+```
+
+Podemos notar que controlando para las variables indicada e introduciendo efectos fijos por contado y año obtenemos que el coeficiente asociado a *lpolpc* es $0.41$. Siendo que tanto la variable dependiente que la independiente están en logaritmo tenemos que interpretar este coeficiente como una elasticidad: al aumentar del $1\%$ el porcentaje de policias per cápita hay un aumento del $0.41\%$ en la tasa de crimen. 
+
+El estimador resulta significativo al $1\%$. Aunque esto parezca contraintuitivo es típico de estudios sobre tasas de criminalidad donde hay una fuerte endogeneidad en la definición del número de policías asignados a un contado. (Baltagi 2006)
+
+Por lo que concierne el estimador relacionado al logaritmo de la probabilidad de arresto esto resulta ser igual a $-0.355$ y significativo al $1\%$, ósea al aumentar del $1\%$ de la probabilidad de arresto desminuye de $0.35$ la tasa de criminalidad.
+
+## Inciso B
+Existe la preocupación de que la variable que indica el número de policías es endógena. Se propone usar como instrumento el porcentaje de los crímenes que son cara a cara (robos, violación, asaltos) con respecto al resto (*lmix*) pues se argumenta que estos crímenes facilitan la identificación del criminal. 
+
+Se propone usar también como instrumento el ingreso per cápita por impuestos (*ltaxpc*) bajo el argumento de que los condados con preferencia por hacer valer la ley tendrán mayores ingresos para financiar la policía. Estime el modelo de efectos fijos tomando en cuenta la endogeneidad e incluyendo las dos variables propuestas como instrumentos. ¿Cómo cambian sus resultados sobre el efecto del número de policías en el crimen?
+
+
+```{r}
+modelo.within.iv1 <-plm(lcrmrte~lprbarr+lpolpc+lprbconv+lprbpris+lavgsen+ldensity+
+                      lpctymle + lpctmin + lwcon + lwtuc+lwtrd+lwfir+lwser+lwmfg+lwfed+ lwsta+ lwloc+factor(smsa)+factor(region) |. -lpolpc+lmix+ltaxpc
+                      ,model="within", effect="twoways",index=c("county", "year"),data=data_crim )
+kable(tidy(modelo.within.iv1), digits=3,caption="Regresión Efectos fijos")
+```
+
+Depurando la variable potencialmente endógena por medio de la instrumental notamos que el efecto de los policías per cápita aumenta de 0.03 puntos porcentuales ($0.441\%$), su nivel de significancia estadística baja al $5\%$.
+
+## Inciso C
+Se sospecha que la probabilidad de ser arrestado es también endógena. Use los mismos instrumentos que en la parte b. para estimar el modelo de efectos fijos con dos variables endógenas. ¿Cómo cambian sus conclusiones respecto a número de policías y la probabilidad de ser arrestado con respecto a la parte a.?
+
+```{r}
+modelo.within.iv2 <-plm(lcrmrte~lprbarr+lpolpc+lprbconv+lprbpris+lavgsen+ldensity+
+                      lpctymle + lpctmin + lwcon + lwtuc+lwtrd+lwfir+lwser+lwmfg+lwfed+ lwsta+ lwloc+factor(smsa)+factor(region) |.-lprbarr -lpolpc+lmix+ltaxpc
+                      ,model="within", effect="twoways",index=c("county", "year"),data=data_crim )
+kable(tidy(modelo.within.iv2), digits=3,caption="Regresión Efectos fijos")
+```
+
+Notamos que, dada le endogeneidad de las dos variables, el estimados asociado a *lpolpc* crece aún más en magnitud hasta llegar al $0.658$ pero ya no resulta significativo, por lo tanto no podemos pensar que sea estadísticamente diferente de $0$. Lo mismo pasa con *lprbarr* que con la primera especificación su estimador tenía un valor de $-0.35$ con una significatividad al $1\%$ (ósea al aumentar de $1\%$ de la probabilidad de ser arrestado la tasa de criminalidad baja del $0.35\%$), con la segunda resultaba valer $-0.36$ con la misma significatividad y en la tercera no es estadísticamente distinto de 0.  
+
+Confrontando los tres modelos tendremos que:
+
+```{r}
+stargazer(modelo.within, modelo.within.iv1, modelo.within.iv2, type = "text",keep = c("lprbarr","lpolpc")
+          , column.labels = c("Efectos Fijos", "EF.IV1", "EF.IV2"))
+```
+Notamos como en el primer caso, considerando endógena solo el número de policías per cápita, la magnitud de los coeficientes asociados a *lprbarr* y *lpolc* aumenta mientras con la especificación considerando ambas variables endógenas los efectos asociados no resultan estadísticamente distintos de $0$. 
+
+# Pregunta 3
+Considere la base de datos patentes.csv.1 Estos datos contienen información sobre empresas de 1970 a 1979, incluyendo el log de su gasto en investigación (logr), el log de su acervo de capital (logk), el número de patentes que les fueron otorgadas en cada año (pat), así como una dummy de si la empresa pertenece al sector científico (scisect). En este problema se puede (aunque no sea siempre factible) usar logr, logk y scisect como controles. Use también efectos por año.
+
+## Inciso A
+Estime un modelo Poisson de efectos aleatorios e interprete el efecto del gasto en investigación. Incluya solo logr y los efectos por año como regresores.
+
+Importamos la base:
+```{r}
+dbp<-read.csv("C:/DAVE2/CIDE/3 semestre/ecnII/TAREA 4/patentes.csv")
+names(dbp)
+```
+
+Modelo de efectos aleatorios:
+
+```{r}
+meffale<-pglm(pat ~logr + year, data=dbp, model="random", family="poisson")
+summary(meffale)
+```
+Notamos que el coeficiente estimado asociado a *logr* es de 0.46 esto significa que al aumentar del $1\%$ el gasto en investigación aumenta el valor esperado de patentes obtenidas en un año del $0.46 \%$.
+
+El utilizo de efectos aleatorio permite mejorar la precisión de los coeficientes en el momento en que sospechamos pueda haber correlación serial.
+
+
+## Inciso B
+[10 puntos] Estime un modelo Poisson de efectos aleatorios e interprete el efecto del gasto en investigación. Incluya, además de los regresores de la parte a., logk y scisect como regresores. ¿Cómo cambia su interpretación del efecto del gasto en investigación?
+
+```{r}
+meffale2<-pglm(pat ~logr + logk + scisect + year , data=dbp, model="random", family="poisson")
+summary(meffale2)
+```
+Notamos que controlando con las nuevas variables observables el efecto asociado al logaritmo del gasto en investigación disminuye ligeramente $(0.40)$. El resultado sigue siendo significativo estadísticamente.
+
+## Inciso C
+[10 puntos] Estime un modelo Poisson de efectos fijos (within) e interprete el efecto del gasto en investigación. Use los mismos controles que en la parte b. ¿Qué ocurre?
+
+```{r}
+modwith<-pglm(pat ~logr+ logk + scisect + year , data=dbp, model="within", family="poisson")
+summary(modwith)
+```
+Notamos que el coeficiente asociado a logr es de 0.38 pero no resulta significativo. De hecho los errores estandár no resultan consistentes. ¿Por qué?
+
+```{r}
+ggplot(dbp,aes(year,logk))+ geom_line(aes(colour=factor(id)))+ theme(legend.position = "none")
+```
+Podemos notar que la característica relativa a *logk* (y también el sector de pertenencia *scisect*) son invariantes en el tiempo. Por lo tanto, estimando un modelo de efectos fijos lineal en desviaciones de la media obtenemos que el valor de la variable de la observación coincide con su media determinando la inconsistencia del modelo. Un modelo within permite identificar los efectos solo para las variables que son variantes en el tiempo siendo que el impacto de las demás variables viene absorbido en los efectos fijos por unidad analizada.    
+
+## Inciso D
+[10 puntos] Modifique el modelo de efectos fijos de tal forma que pueda estimar el efecto del gasto en investigación. ¿Cómo cambia su conclusión respecto al efecto de dicho gasto?
+
+A partir de las conclusiones del inciso anterior tendremos que eliminar del modelo las variables invariantes en el tiempo (*scisect* y *logk*) así de obtener un modelo consistente.
+
+```{r}
+modwith2<-pglm(pat ~logr + year , data=dbp, model="within",family="poisson")
+summary(modwith2)
+```
+Notamos que los efectos del gasto de investigación ahora resultan en un aumento del $0.38\%$ en el valor esperado de número de patentes dado un aumento del $1\%$ del gasto en investigación. El efecto estimado por medio de efectos fijos resulta por lo tanto menor con respecto al de efectos aleatorios $ \Rightarrow 0.46$ vs $0.38$. Ambos resultan significativos al $1\%$.
+

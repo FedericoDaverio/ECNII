@@ -47,6 +47,8 @@ library(knitr)
 library(ExPanDaR)
 ```
 
+
+
 # Pregunta 1 
 Considere la base *MunichRent.rda*. Esta base contiene información sobre rentas en la ciudad de Munich, *rent*. Se desea modelar la renta en función de la antigüedad de los edificios en renta, controlando por el área, área. La variable yearc indica cuándo fue construido el edificio.
 
